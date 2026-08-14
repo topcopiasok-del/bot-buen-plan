@@ -29,6 +29,9 @@ if (!firebase.apps.length) {
 let dynamicContext = "Cargando catálogo...";
 const mutedUsers = new Map();
 const messageCounts = new Map();
+const chatHistories = new Map();
+const messageQueues = new Map();
+const DEBOUNCE_TIME = 20000;
 const TWELVE_HOURS = 12 * 60 * 60 * 1000;
 const ANTI_ABUSE_MINUTES = 15 * 60 * 1000;
 
@@ -53,12 +56,21 @@ async function initFirebase() {
                 const anillado_base = cfg.anillado_base || 1500;
                 const anillado_extra = cfg.anillado_extra || 500;
                 const banco = cfg.banco || "BUENPLAN.MP";
+                const plazo = cfg.plazo || "A confirmar";
+                
+                let profesStr = "";
+                const profesList = data.profesores ? Object.values(data.profesores) : [];
+                if (profesList.length > 0) {
+                    profesStr = profesList.map(p => `- ${p.nombre}`).join("\n");
+                }
+                if (profesStr === "") profesStr = "No hay profesores registrados.";
 
                 let apuntesStr = "";
                 if (data.apuntes) {
                     const apuntes = Object.values(data.apuntes);
                     apuntes.forEach(ap => {
-                        let profe = data.profesores && data.profesores[ap.profesorId] ? data.profesores[ap.profesorId].nombre : "General";
+                        let profeObj = profesList.find(p => p.id === ap.profesorId);
+                        let profe = profeObj ? profeObj.nombre : "General";
                         apuntesStr += `- "${ap.titulo}" (Profe: ${profe}). Precio Fijo: $${ap.precio}\n`;
                     });
                 }
@@ -68,6 +80,9 @@ async function initFirebase() {
 CATÁLOGO DE APUNTES DISPONIBLES:
 ${apuntesStr}
 
+PROFESORES / MATERIAS DISPONIBLES:
+${profesStr}
+
 REGLAS DE PRECIOS BASE PARA IMPRESIONES SUELTAS (Papel A4 Obra):
 - Blanco y Negro: $${byn_simple} (Simple Faz) / $${byn_doble} (Doble Faz, por HOJA).
 - A Color: $${color_simple} (Simple Faz) / $${color_doble} (Doble Faz, por HOJA).
@@ -75,6 +90,9 @@ REGLAS DE PRECIOS BASE PARA IMPRESIONES SUELTAS (Papel A4 Obra):
 
 DATOS DE PAGO:
 Para abonar, el cliente debe transferir al alias: ${banco}.
+
+FECHA DE ENTREGA ESTIMADA:
+Los trabajos (impresiones) están listos para el día: ${plazo}. (Si te preguntan "para cuándo está", responde con esta fecha).
 `;
                 console.log("¡Catálogo y precios actualizados en la memoria de la IA!");
             }
@@ -85,15 +103,24 @@ Para abonar, el cliente debe transferir al alias: ${banco}.
 }
 
 const BASE_PROMPT = `Eres el asistente virtual de "Buen Plan", papelería y centro de copiado.
-Trata al cliente de "vos".
+Trata al cliente de "vos", de forma amable y servicial.
 
 REGLAS ESTRICTAS DE RESPUESTA:
-1. SIEMPRE DERIVAR AL LINK DE COTIZACIÓN AUTOMÁTICA: La regla de oro de este negocio es que los clientes suban sus archivos a nuestra web. Si un cliente quiere imprimir archivos (PDF, Word, Fotos) o pide apuntes de escuelas de Gesell, DEBES invitarlo a entrar a: https://buenplan.topcopiasok.workers.dev/alumnos explicándole que allí puede subir sus archivos, ver el catálogo completo y el sistema le dirá el precio exacto al instante.
-2. PRECIOS ESTIMADOS: Si el cliente te pregunta un precio por acá de todas formas, usa la tabla de precios que tienes abajo, pero SIEMPRE aclarele que "Es un precio estimado" y volvé a sugerirle que lo cotice exacto en el link.
-3. SI EL CLIENTE TE ENVÍA UN ARCHIVO POR AQUÍ: Dile que por cuestiones técnicas no cotizas archivos directamente en el chat, y que por favor entre al link https://buenplan.topcopiasok.workers.dev/alumnos para subirlo y encargar el pedido.
-4. NO DES DETALLES INNECESARIOS: Sé directo. Siempre asume que las impresiones son en A4 Obra B&N por defecto.
-5. TRABAJOS COMPLEJOS: Si piden medidas distintas (no A4), volantes, tarjetas, o trabajos raros, responde EXACTAMENTE: "Ese tipo de trabajos los cotizamos de forma personalizada. Un integrante del equipo te atenderá a la brevedad."
-6. PRODUCTOS DE TIENDA: Si piden agendas o cuadernos de diseño físico, derívalos a: https://buenplan.ar
+1. SALUDOS GENÉRICOS: Si el cliente solo dice "Hola", "Buenas", "Buen día", etc., NO asumas que quiere imprimir ni le des precios. Responde amablemente algo simple como "¡Hola! Somos Buen Plan, ¿cómo podemos ayudarte?".
+2. PRODUCTOS DE LA TIENDA: Si el cliente pregunta si venden agendas, cuadernos de diseño, libretas, souvenirs o regalos, respóndele que SÍ venden y que puede ver diseños y precios ingresando a: https://buenplan.ar
+3. COTIZACIÓN DE IMPRESIONES: Si el cliente pregunta cuánto cuesta una impresión (A4, blanco y negro, color), utiliza los precios de la tabla inferior para darle un valor.
+4. ARCHIVOS RECIBIDOS: Si el cliente envía un archivo o documento, lee la pista invisible que te dará el sistema. Si te indica la cantidad de páginas, COTIZA ese documento multiplicando por el precio de Blanco y Negro Simple Faz y dale el valor total estimado.
+5. REGLA DEL ANILLADO: NUNCA des detalles de cómo se calcula el anillado (valor base, extra por hojas, etc). Simplemente dales el precio final. Si el archivo o pedido tiene MENOS de 40 páginas, NO ofrezcas anillarlo a menos que te lo pidan. Si tiene MÁS de 40 páginas, ofrécelo como una opción directa (Ejemplo: "En A4 simple faz impreso te sale $X, o $Y si lo querés con anillado").
+6. DERIVAR A LA WEB (PRIORIDAD): Tu objetivo principal es que el cliente cierre su pedido usando nuestra web (https://buenplan.topcopiasok.workers.dev/alumnos). Ofrécela SIEMPRE como la primera opción. Solo si el cliente prefiere o insiste en encargar el trabajo directamente por WhatsApp, procede así: 1) Pasa el presupuesto. 2) Pide que confirme con nombre y apellido. 3) Sugiere pagar en el alias (no es obligatorio). 4) Informa que estará listo en la fecha de entrega estimada.
+7. TRABAJOS COMPLEJOS: Intenta resolver o recolectar todos los detalles del trabajo (tamaño, cantidad, tipo de papel). Trata de ayudar todo lo que puedas sin rendirte fácilmente. Solo si el cliente exige hablar con un humano o el trabajo es imposible de cotizar, dile EXACTAMENTE: "Un integrante del equipo te atenderá a la brevedad."
+8. BUSCAR EN CATÁLOGO: Si un estudiante busca su módulo o apunte, búscalo en el "CATÁLOGO DE APUNTES DISPONIBLES" en tu memoria. Ahí tienes toda la info de los profesores y precios para tomarle el pedido.
+9. NO DES DETALLES INNECESARIOS: Sé directo.
+
+HORARIOS Y DIRECCIÓN DEL LOCAL FÍSICO:
+- Dirección: Av 3 N 1406 (Altura 114), sobre Av 3, al lado de la quiniela (el local no tiene carteles).
+- Lunes a Jueves: 9:00 a 12:00 hs y de 17:30 a 19:00 hs.
+- Viernes: 9:00 a 12:30 hs (Cerrado por la tarde).
+- Sábados y Domingos: Cerrado.
 
 INFORMACIÓN EN TIEMPO REAL:
 `;
@@ -176,40 +203,87 @@ async function connectToWhatsApp () {
 
             let textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
 
-            // Detectar si mandó un archivo (Documento o Imagen) sin necesidad de descargarlo
+            // Detectar si mandó un archivo (Documento, Imagen o Audio) sin necesidad de descargarlo
             const docMessage = msg.message.documentMessage || msg.message.documentWithCaptionMessage?.message?.documentMessage;
             const imgMessage = msg.message.imageMessage || msg.message.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage;
+            const audioMessage = msg.message.audioMessage;
 
-            if (docMessage || imgMessage) {
-                // Le pasamos esta pista invisible a Gemini para que sepa que el cliente mandó un archivo
-                textMessage = "[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO ADJUNTO AL CHAT] " + (textMessage || "¿Cuánto sale imprimir esto?");
+            if (audioMessage) {
+                textMessage = `[EL CLIENTE ACABA DE ENVIAR UN AUDIO. Tú NO puedes escuchar audios. Pídele amablemente que por favor escriba su consulta por texto.]`;
+            } else if (docMessage) {
+                const pages = docMessage.pageCount;
+                if (pages && pages > 0) {
+                    textMessage = `[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO PDF DE ${pages} PÁGINAS. Calcula el precio total asumiendo impresión en Blanco y Negro, Simple Faz en A4] ` + (textMessage || "¿Cuánto sale imprimir esto?");
+                } else {
+                    textMessage = `[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO pero el sistema no puede leer cuántas páginas tiene. Pídele amablemente que lo suba a la web para cotizarlo correctamente] ` + (textMessage || "¿Cuánto sale imprimir esto?");
+                }
+            } else if (imgMessage) {
+                textMessage = `[EL CLIENTE ACABA DE ENVIAR 1 IMAGEN. Calcula el precio por 1 carilla A Color y luego derívalo a la web] ` + (textMessage || "¿Cuánto sale imprimir esto?");
             }
 
             if (textMessage) {
-                console.log(`\n💬 Procesando consulta de ${senderNumber.split('@')[0]}`);
-                try {
-                    await sock.sendPresenceUpdate('composing', senderNumber);
-
-                    const model = genAI.getGenerativeModel({ 
-                        model: "gemini-flash-latest",
-                        systemInstruction: BASE_PROMPT + dynamicContext
-                    });
-                    
-                    const result = await model.generateContent(textMessage);
-                    const aiResponseText = result.response.text();
-
-                    await sock.sendMessage(senderNumber, { text: aiResponseText });
-                    console.log(`🤖 Respuesta enviada.`);
-                    
-                    if (aiResponseText.includes("integrante del equipo te atenderá")) {
-                        mutedUsers.set(senderNumber, Date.now());
-                        console.log(`[DERIVACIÓN] 👤 Bot silenciado para ${senderNumber.split('@')[0]}.`);
-                    }
-
-                    await sock.sendPresenceUpdate('paused', senderNumber);
-                } catch (error) {
-                    console.error("❌ Error al generar respuesta:", error.message);
+                const queue = messageQueues.get(senderNumber) || { text: "", timer: null };
+                
+                if (queue.text !== "") {
+                    queue.text += "\n" + textMessage;
+                } else {
+                    queue.text = textMessage;
                 }
+
+                if (queue.timer) clearTimeout(queue.timer);
+
+                queue.timer = setTimeout(async () => {
+                    const finalMessage = queue.text;
+                    messageQueues.delete(senderNumber);
+                    
+                    console.log(`\n💬 Procesando consulta consolidada de ${senderNumber.split('@')[0]}`);
+                    try {
+                        await sock.sendPresenceUpdate('composing', senderNumber);
+
+                        // Recuperar o iniciar el historial
+                        let userHistory = chatHistories.get(senderNumber) || [];
+                        userHistory.push({ role: "user", parts: [{ text: finalMessage }] });
+                        
+                        // Mantener solo los últimos 6 mensajes (3 idas y vueltas) para no gastar de más
+                        if (userHistory.length > 6) userHistory = userHistory.slice(userHistory.length - 6);
+
+                        const model = genAI.getGenerativeModel({ 
+                            model: "gemini-flash-latest",
+                            systemInstruction: BASE_PROMPT + dynamicContext
+                        });
+                        
+                        const result = await model.generateContent({ contents: userHistory });
+                        const aiResponseText = result.response.text();
+
+                        // Guardar la respuesta del bot en el historial
+                        userHistory.push({ role: "model", parts: [{ text: aiResponseText }] });
+                        chatHistories.set(senderNumber, userHistory);
+
+                        await sock.sendMessage(senderNumber, { text: aiResponseText });
+                        console.log(`🤖 Respuesta enviada.`);
+                        
+                        if (aiResponseText.includes("integrante del equipo te atenderá")) {
+                            mutedUsers.set(senderNumber, Date.now());
+                            console.log(`[DERIVACIÓN] 👤 Bot silenciado para ${senderNumber.split('@')[0]}.`);
+                            
+                            // Enviarse un mensaje de alerta a sí mismo (al número del bot)
+                            try {
+                                const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                                await sock.sendMessage(botNumber, { 
+                                    text: `⚠️ *ALERTA DE ATENCIÓN* ⚠️\nEl cliente wa.me/${senderNumber.split('@')[0]} requiere intervención humana.\nÚltimo mensaje consolidado del cliente:\n"${finalMessage}"` 
+                                });
+                            } catch (e) {
+                                console.log("No se pudo enviar la alerta al propio bot.");
+                            }
+                        }
+
+                        await sock.sendPresenceUpdate('paused', senderNumber);
+                    } catch (error) {
+                        console.error("❌ Error al generar respuesta:", error.message);
+                    }
+                }, DEBOUNCE_TIME);
+                
+                messageQueues.set(senderNumber, queue);
             }
         }
     })
