@@ -31,6 +31,7 @@ const mutedUsers = new Map();
 const messageCounts = new Map();
 const chatHistories = new Map();
 const messageQueues = new Map();
+const botMessageIds = new Set();
 const DEBOUNCE_TIME = 20000;
 const TWELVE_HOURS = 12 * 60 * 60 * 1000;
 const ANTI_ABUSE_MINUTES = 15 * 60 * 1000;
@@ -183,6 +184,10 @@ async function connectToWhatsApp () {
             const isOwnerTesting = senderNumber.includes('2267448815'); 
 
             if (msg.key.fromMe) {
+                if (botMessageIds.has(msg.key.id)) {
+                    botMessageIds.delete(msg.key.id);
+                    continue;
+                }
                 if (!senderNumber.includes('@g.us') && senderNumber !== 'status@broadcast') {
                     mutedUsers.set(senderNumber, Date.now());
                     console.log(`\n[MUTE] 🤐 Le respondiste a ${senderNumber.split('@')[0]}. Bot silenciado por 12 horas.`);
@@ -279,7 +284,8 @@ async function connectToWhatsApp () {
                         userHistory.push({ role: "model", parts: [{ text: aiResponseText }] });
                         chatHistories.set(senderNumber, userHistory);
 
-                        await sock.sendMessage(senderNumber, { text: aiResponseText });
+                        const sentMsg = await sock.sendMessage(senderNumber, { text: aiResponseText });
+                        if (sentMsg) botMessageIds.add(sentMsg.key.id);
                         console.log(`🤖 Respuesta enviada.`);
                         
                         if (aiResponseText.includes("integrante del equipo te atenderá")) {
