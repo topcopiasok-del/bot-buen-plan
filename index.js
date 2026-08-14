@@ -134,6 +134,22 @@ async function connectToWhatsApp () {
         logger: pino({ level: "silent" })
     })
 
+    if(!sock.authState.creds.registered) {
+        setTimeout(async () => {
+            try {
+                let code = await sock.requestPairingCode("5492255556502");
+                code = code?.match(/.{1,4}/g)?.join('-') || code;
+                console.log("\n=======================================================================");
+                console.log(`¡ATENCIÓN! TU CÓDIGO DE VINCULACIÓN ES: ${code}`);
+                console.log("Abre WhatsApp > Dispositivos Vinculados > Vincular con número de teléfono");
+                console.log("=======================================================================\n");
+            } catch(e) {
+                console.log("No se pudo obtener el código de vinculación. Intenta más tarde.", e);
+            }
+        }, 4000);
+    }
+
+
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update
         if(qr) {
