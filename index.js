@@ -133,26 +133,9 @@ async function connectToWhatsApp () {
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
-        logger: pino({ level: "silent" })
-    })
+    let pairingCodeRequested = false;
 
-    if(!sock.authState.creds.registered) {
-        setTimeout(async () => {
-            try {
-                let code = await sock.requestPairingCode("5492255556502");
-                code = code?.match(/.{1,4}/g)?.join('-') || code;
-                console.log("\n=======================================================================");
-                console.log(`¡ATENCIÓN! TU CÓDIGO DE VINCULACIÓN ES: ${code}`);
-                console.log("Abre WhatsApp > Dispositivos Vinculados > Vincular con número de teléfono");
-                console.log("=======================================================================\n");
-            } catch(e) {
-                console.log("No se pudo obtener el código de vinculación. Intenta más tarde.", e);
-            }
-        }, 4000);
-    }
-
-
-    sock.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update
         if(qr) {
             console.log("\n=======================================================================");
@@ -162,6 +145,23 @@ async function connectToWhatsApp () {
             console.log("https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=" + encodeURIComponent(qr));
             console.log("\n");
             qrcode.generate(qr, {small: true});
+
+            if (!sock.authState.creds.registered && !pairingCodeRequested) {
+                pairingCodeRequested = true;
+                setTimeout(async () => {
+                    try {
+                        let code = await sock.requestPairingCode("5492255556502");
+                        code = code?.match(/.{1,4}/g)?.join('-') || code;
+                        console.log("\n=======================================================================");
+                        console.log(`¡ATENCIÓN! TU CÓDIGO DE VINCULACIÓN ES: ${code}`);
+                        console.log("Abre WhatsApp > Dispositivos Vinculados > Vincular con número de teléfono");
+                        console.log("=======================================================================\n");
+                    } catch(e) {
+                        console.log("No se pudo obtener el código de vinculación. Intenta más tarde.", e);
+                        pairingCodeRequested = false;
+                    }
+                }, 2000);
+            }
         }
         if(connection === 'close') {
             const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut
