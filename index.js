@@ -140,6 +140,9 @@ async function connectToWhatsApp () {
             console.log("\n=======================================================================");
             console.log("¡ATENCIÓN! ESCANEA ESTE CÓDIGO QR CON EL WHATSAPP DE TU CELULAR");
             console.log("=======================================================================\n");
+            console.log("Si el QR de abajo se ve mal, HAZ CLIC EN ESTE ENLACE PARA VERLO COMO IMAGEN:");
+            console.log("https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=" + encodeURIComponent(qr));
+            console.log("\n");
             qrcode.generate(qr, {small: true});
         }
         if(connection === 'close') {
