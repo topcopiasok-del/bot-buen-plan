@@ -182,7 +182,7 @@ async function connectToWhatsApp () {
             if (!msg.message) continue;
 
             const senderNumber = msg.key.remoteJid;
-            const isOwnerTesting = senderNumber.includes('2267448815'); 
+            const isOwnerTesting = senderNumber.includes('22674418815'); 
 
             if (msg.key.fromMe) {
                 if (botMessageIds.has(msg.key.id)) {
@@ -218,8 +218,8 @@ async function connectToWhatsApp () {
                 userStats.count += 1;
                 messageCounts.set(senderNumber, userStats);
 
-                if (userStats.count > 10) {
-                    if (userStats.count === 11) {
+                if (userStats.count > 100) {
+                    if (userStats.count === 101) {
                         await sock.sendMessage(senderNumber, { text: "Has realizado demasiadas consultas seguidas. Un integrante del equipo te atenderá de forma personalizada a la brevedad." });
                         mutedUsers.set(senderNumber, Date.now()); 
                     }
@@ -239,14 +239,14 @@ async function connectToWhatsApp () {
             } else if (docMessage) {
                 const pages = docMessage.pageCount;
                 if (pages && pages > 2) {
-                    textMessage = `[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO PDF DE ${pages} PÁGINAS. Calcula el precio total asumiendo impresión en Blanco y Negro, Doble Faz en A4 (a menos que el cliente haya especificado simple faz explícitamente)] ` + (textMessage || "¿Cuánto sale imprimir esto?");
+                    textMessage = `[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO PDF DE ${pages} PÁGINAS. Si crees que es un comprobante de pago, NO lo cotices. Si es para imprimir, calcula el precio asumiendo impresión en Blanco y Negro, Doble Faz en A4] ` + (textMessage || "");
                 } else if (pages && pages > 0) {
-                    textMessage = `[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO PDF DE ${pages} PÁGINAS. Calcula el precio total asumiendo impresión en Blanco y Negro, Simple Faz en A4] ` + (textMessage || "¿Cuánto sale imprimir esto?");
+                    textMessage = `[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO PDF DE ${pages} PÁGINAS. Si crees que es un comprobante de pago, NO lo cotices. Si es para imprimir, calcula el precio asumiendo impresión en Blanco y Negro, Simple Faz en A4] ` + (textMessage || "");
                 } else {
-                    textMessage = `[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO pero el sistema no puede leer cuántas páginas tiene. Pídele amablemente que lo suba a la web para cotizarlo correctamente] ` + (textMessage || "¿Cuánto sale imprimir esto?");
+                    textMessage = `[EL CLIENTE ACABA DE ENVIAR UN ARCHIVO. Si es un comprobante de pago, avisa que será revisado. Si es para imprimir, dile que el sistema no puede leer cuántas páginas tiene y pídele amablemente que lo suba a la web] ` + (textMessage || "");
                 }
             } else if (imgMessage) {
-                textMessage = `[EL CLIENTE ACABA DE ENVIAR 1 IMAGEN. Calcula el precio por 1 carilla A Color y luego derívalo a la web] ` + (textMessage || "¿Cuánto sale imprimir esto?");
+                textMessage = `[EL CLIENTE ACABA DE ENVIAR 1 IMAGEN. Si parece un COMPROBANTE DE PAGO, NO lo cotices y avisa que un integrante lo revisará. Si parece una imagen para imprimir, calcula el precio por 1 carilla A Color y derívalo a la web] ` + (textMessage || "");
             }
 
             if (textMessage) {
