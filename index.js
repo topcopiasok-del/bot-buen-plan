@@ -107,7 +107,7 @@ const BASE_PROMPT = `Eres el asistente digital o bot de "Buen Plan", papelería 
 Trata al cliente de "vos", de forma amable y servicial.
 
 REGLAS ESTRICTAS DE RESPUESTA:
-1. SALUDOS GENÉRICOS: Si el cliente solo dice "Hola", "Buenas", "Buen día", etc., NO asumas que quiere imprimir ni le des precios. Responde presentándote, por ejemplo: "¡Hola! Soy el asistente digital de Buen Plan, ¿cómo te puedo ayudar?".
+1. SALUDOS GENÉRICOS: Si el cliente solo dice "Hola", "Buenas", "Buen día", etc., NO asumas que quiere imprimir ni le des precios. Responde presentándote, por ejemplo: "¡Hola! Soy el asistente automático o bot de Buen Plan, ¿cómo te puedo ayudar?".
 2. PRODUCTOS PERSONALIZADOS Y SOUVENIRS (LIBRITOS/REVISTAS PARA COLOREAR): Si preguntan por libritos, revistas personalizadas, souvenirs, colorear, cumpleaños, bautismos, etc., SÉ BREVE. No des detalles de medidas, materiales ni reglas de cantidad a menos que el cliente lo pregunte explícitamente.
   - REGLA PRINCIPAL: Deriva TODO a https://buenplan.ar (allí están los precios, plazos, envío y toda la info). NUNCA pases el link de impresiones (no mezcles los negocios).
   - COORDINACIÓN: Aclará brevemente que una vez hecha la compra por la web, nos comunicamos por WhatsApp o email para coordinar el diseño personalizado.
@@ -143,6 +143,38 @@ HORARIOS Y DIRECCIÓN DEL LOCAL FÍSICO:
 
 INFORMACIÓN EN TIEMPO REAL:
 `;
+
+function isBusinessHours() {
+    const formatter = new Intl.DateTimeFormat('es-AR', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        weekday: 'long',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: false
+    });
+    
+    const parts = formatter.formatToParts(new Date());
+    let weekday = '', hour = 0, minute = 0;
+    
+    for (const part of parts) {
+        if (part.type === 'weekday') weekday = part.value.toLowerCase();
+        if (part.type === 'hour') hour = parseInt(part.value, 10);
+        if (part.type === 'minute') minute = parseInt(part.value, 10);
+    }
+    
+    const timeInMinutes = hour * 60 + minute;
+    
+    if (['lunes', 'martes', 'miércoles', 'miercoles', 'jueves'].includes(weekday)) {
+        if (timeInMinutes >= 540 && timeInMinutes < 720) return true; // 9:00 a 12:00
+        if (timeInMinutes >= 1050 && timeInMinutes < 1140) return true; // 17:30 a 19:00
+    }
+    
+    if (weekday === 'viernes') {
+        if (timeInMinutes >= 540 && timeInMinutes < 750) return true; // 9:00 a 12:30
+    }
+    
+    return false;
+}
 
 async function connectToWhatsApp () {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys')
@@ -197,6 +229,11 @@ async function connectToWhatsApp () {
             }
 
             if (senderNumber.includes('@g.us') || senderNumber === 'status@broadcast') continue;
+
+            if (isBusinessHours() && !isOwnerTesting) {
+                // Silenciosamente ignoramos el mensaje en horario comercial
+                continue;
+            }
 
             if (mutedUsers.has(senderNumber) && !isOwnerTesting) {
                 if (Date.now() - mutedUsers.get(senderNumber) < TWELVE_HOURS) {
