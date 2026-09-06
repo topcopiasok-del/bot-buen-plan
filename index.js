@@ -124,6 +124,7 @@ REGLAS ESTRICTAS DE RESPUESTA:
 12. NO DES DETALLES INNECESARIOS: Sé directo.
 
 HORARIOS Y DIRECCIÓN DEL LOCAL FÍSICO:
+- ¡ANUNCIO IMPORTANTE! El día Lunes 7/9/2026 el local permanecerá CERRADO.
 - Dirección: Av 3 N 1406 (Altura 114), sobre Av 3, al lado de la quiniela.
 - Lunes a Jueves: 9:00 a 12:00 hs y 17:30 a 19:00 hs.
 - Viernes: 9:00 a 12:30 hs (Cerrado por la tarde).
@@ -193,7 +194,9 @@ async function connectToWhatsApp () {
         auth: state,
         printQRInTerminal: false,
         logger: pino({ level: "silent" }),
-        keepAliveIntervalMs: 15000
+        keepAliveIntervalMs: 15000,
+        syncFullHistory: false,
+        markOnlineOnConnect: true
     });
 
     sock.ev.on('connection.update', async (update) => {
@@ -240,11 +243,6 @@ async function connectToWhatsApp () {
             }
 
             if (senderNumber.includes('@g.us') || senderNumber === 'status@broadcast') continue;
-
-            if (isBusinessHours() && !isOwnerTesting) {
-                // Silenciosamente ignoramos el mensaje en horario comercial
-                continue;
-            }
 
             if (mutedUsers.has(senderNumber) && !isOwnerTesting) {
                 if (Date.now() - mutedUsers.get(senderNumber) < ONE_HOUR) {
