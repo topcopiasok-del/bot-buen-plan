@@ -33,10 +33,11 @@ const chatHistories = new Map();
 const messageQueues = new Map();
 const userModes = new Map();
 const botMessageIds = new Set();
+const botReplyCounts = new Map(); // Para limitar a 5 mensajes por sesión
 let botAwake = true; // Variable para dormir o despertar al bot
 const OWNER_NUMBERS = ['22674418815', '2255556502']; // Números autorizados para comandos
 const DEBOUNCE_TIME = 20000;
-const ONE_HOUR = 60 * 60 * 1000;
+const TWELVE_HOURS = 12 * 60 * 60 * 1000;
 const ANTI_ABUSE_MINUTES = 15 * 60 * 1000;
 
 async function initFirebase() {
@@ -106,13 +107,14 @@ Los trabajos (impresiones) están listos para el día: ${plazo}. (Si te pregunta
     }
 }
 
-const PROMPT_IMPRESIONES = `Eres el asistente digital o bot de "Buen Plan", papelería y centro de copiado.
+const PROMPT_IMPRESIONES = `Eres el asistente virtual de "Buen Plan", papelería y centro de copiado.
 Trata al cliente de "vos", de forma amable y servicial. Estás en el MODO IMPRESIONES.
 
 REGLAS ESTRICTAS DE RESPUESTA:
+0. BREVEDAD: Tus respuestas deben ser SIEMPRE MUY CORTAS y precisas. No des explicaciones largas.
 1. ENFOQUE EXCLUSIVO: Tu único trabajo aquí es cotizar impresiones, fotocopias y apuntes.
 2. PROHIBICIÓN DE AGENDAS: BAJO NINGÚN CONCEPTO ofrezcas ni hables de agendas, cuadernos, souvenires, ni des la web buenplan.ar a menos que el cliente pregunte explícitamente ("vi que hacen agendas"). Si te preguntan, diles que deben elegir la opción 2 del menú inicial o derívalos.
-3. COTIZACIÓN DE IMPRESIONES: Si el cliente pregunta cuánto cuesta imprimir, asume SIEMPRE que es en Blanco y Negro y dale solo ese precio. NO menciones opciones a Color a menos que el cliente use la palabra "color" explícitamente.
+3. COTIZACIÓN DE IMPRESIONES: Si el cliente pregunta cuánto cuesta imprimir, asume SIEMPRE que es en Blanco y Negro y dale solo ese precio. NO menciones opciones a Color a menos que el cliente use la palabra "color" explícitamente. Aclara que de todas maneras una persona revisará y confirmará el presupuesto final ya que puede haber algún detalle no tenido en cuenta.
 4. ARCHIVOS RECIBIDOS Y PRESUPUESTO TOTAL:
    - El sistema te dará una pista invisible sobre la cantidad de páginas.
    - Suma SIEMPRE el total de todos los archivos enviados en la charla para darle el costo total.
@@ -135,10 +137,11 @@ HORARIOS Y DIRECCIÓN DEL LOCAL FÍSICO:
 INFORMACIÓN EN TIEMPO REAL:
 `;
 
-const PROMPT_BUENPLAN = `Eres el asistente digital o bot de "Buen Plan".
+const PROMPT_BUENPLAN = `Eres el asistente virtual de "Buen Plan".
 Trata al cliente de "vos", de forma amable y servicial. Estás en el MODO AGENDAS Y SOUVENIRES.
 
 REGLAS ESTRICTAS DE RESPUESTA:
+0. BREVEDAD: Tus respuestas deben ser SIEMPRE MUY CORTAS y precisas. No des explicaciones largas.
 1. ENFOQUE EXCLUSIVO: Tu único trabajo aquí es asesorar sobre agendas, cuadernos de diseño, libretas, souvenires y regalos.
 2. PROHIBICIÓN DE IMPRESIONES: BAJO NINGÚN CONCEPTO ofrezcas, cotices ni hables de fotocopias, impresiones o apuntes, ni des la web de alumnos. Si preguntan por impresiones, diles que deben elegir la opción 1 del menú inicial o derívalos.
 3. PRODUCTOS PERSONALIZADOS: Deriva TODO a https://buenplan.ar (allí están los precios, plazos y envío).
@@ -238,7 +241,8 @@ async function connectToWhatsApp () {
             if (!msg.message) continue;
 
             const senderNumber = msg.key.remoteJid;
-            const isOwnerTesting = OWNER_NUMBERS.some(num => senderNumber.includes(num));
+            const fromMe = msg.key.fromMe || false;
+            const isOwnerTesting = OWNER_NUMBERS.some(num => senderNumber.includes(num)) || fromMe;
 
             let textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
 
@@ -378,6 +382,12 @@ async function connectToWhatsApp () {
                                 const sentMsg = await sock.sendMessage(senderNumber, { text: routerResponse });
                                 if (sentMsg) botMessageIds.add(sentMsg.key.id);
                                 await sock.sendPresenceUpdate('paused', senderNumber);
+                                
+                                let replyStats = botReplyCounts.get(senderNumber) || { count: 0, timestamp: Date.now() };
+                                if (Date.now() - replyStats.timestamp > TWELVE_HOURS) { replyStats.count = 0; replyStats.timestamp = Date.now(); }
+                                replyStats.count += 1;
+                                botReplyCounts.set(senderNumber, replyStats);
+                                
                                 return;
                             }
                         } catch (e) {
@@ -390,6 +400,33 @@ async function connectToWhatsApp () {
                         userModes.set(senderNumber, modeData);
                     }
                     try {
+                        let replyStats = botReplyCounts.get(senderNumber) || { count: 0, timestamp: Date.now() };
+                        if (Date.now() - replyStats.timestamp > TWELVE_HOURS) {
+                            replyStats.count = 0;
+                            replyStats.timestamp = Date.now();
+                        }
+
+                        if (replyStats.count >= 5) {
+                            const finalMsg = "Un integrante del equipo revisará tu pedido y te responderá a la brevedad.";
+                            const sentMsg = await sock.sendMessage(senderNumber, { text: finalMsg });
+                            if (sentMsg) botMessageIds.add(sentMsg.key.id);
+                            
+                            mutedUsers.set(senderNumber, Date.now());
+                            console.log(`[LÍMITE ALCANZADO] 👤 5 mensajes enviados. Bot silenciado por 12hs para ${senderNumber.split('@')[0]}.`);
+                            
+                            try {
+                                const botNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+                                await sock.sendMessage(botNumber, { 
+                                    text: `⚠️ *ALERTA DE ATENCIÓN (Límite 5 msgs)* ⚠️\nEl cliente wa.me/${senderNumber.split('@')[0]} requiere intervención humana.\nÚltimo mensaje:\n"${finalMessage}"` 
+                                });
+                            } catch (e) {}
+                            
+                            return;
+                        }
+
+                        replyStats.count += 1;
+                        botReplyCounts.set(senderNumber, replyStats);
+
                         await sock.sendPresenceUpdate('composing', senderNumber);
 
                         // Recuperar o iniciar el historial
