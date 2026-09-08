@@ -33,6 +33,8 @@ const chatHistories = new Map();
 const messageQueues = new Map();
 const userModes = new Map();
 const botMessageIds = new Set();
+let botAwake = true; // Variable para dormir o despertar al bot
+const OWNER_NUMBERS = ['22674418815', '2255556502']; // Números autorizados para comandos
 const DEBOUNCE_TIME = 20000;
 const ONE_HOUR = 60 * 60 * 1000;
 const ANTI_ABUSE_MINUTES = 15 * 60 * 1000;
@@ -154,6 +156,14 @@ HORARIOS Y DIRECCIÓN DEL LOCAL FÍSICO:
 - Sábados y Domingos: Cerrado.
 `;
 
+const PROMPT_ROUTER = `Eres el recepcionista de "Buen Plan" (papelería, fotocopias y venta de agendas/cuadernos).
+Tu objetivo es leer la conversación del cliente y determinar qué servicio busca.
+
+REGLAS ESTRICTAS:
+1. Si el cliente busca fotocopias, impresiones, imprimir, anillados, o apuntes (o responde con "1", "la primera"), DEBES responder ÚNICAMENTE con la palabra clave: [ROUTER_IMPRESIONES]
+2. Si el cliente busca agendas, libretas, cuadernos, souvenires o regalos (o responde con "2", "la segunda"), DEBES responder ÚNICAMENTE con la palabra clave: [ROUTER_AGENDAS]
+3. Si el cliente solo dice "Hola", "Buen día" o su mensaje no deja claro qué servicio de los dos quiere, salúdalo amablemente (de forma humana y natural, no estructurada). Pregúntale en qué lo puedes ayudar hoy, dándole a elegir entre el sector de "Impresiones y Apuntes" o el sector de "Agendas y Cuadernos". NO ofrezcas otros servicios ni des catálogos aquí.
+`;
 
 function isBusinessHours() {
     const formatter = new Intl.DateTimeFormat('es-AR', {
@@ -228,7 +238,26 @@ async function connectToWhatsApp () {
             if (!msg.message) continue;
 
             const senderNumber = msg.key.remoteJid;
-            const isOwnerTesting = senderNumber.includes('22674418815'); 
+            const isOwnerTesting = OWNER_NUMBERS.some(num => senderNumber.includes(num));
+
+            let textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+
+            // Lógica para prender o apagar el bot
+            if (isOwnerTesting) {
+                const commandText = textMessage.trim().toLowerCase();
+                if (commandText === 'desactivar') {
+                    botAwake = false;
+                    await sock.sendMessage(senderNumber, { text: "💤 Bot desactivado. No responderé más mensajes hasta que envíes 'activar'." });
+                    continue;
+                } else if (commandText === 'activar') {
+                    botAwake = true;
+                    await sock.sendMessage(senderNumber, { text: "🚀 Bot activado. Vuelvo a estar operativo." });
+                    continue;
+                }
+            }
+
+            // Si el bot está dormido, no procesamos nada (salvo los comandos de arriba que ya se ejecutaron)
+            if (!botAwake) return;
 
             if (msg.key.fromMe) {
                 if (botMessageIds.has(msg.key.id)) {
@@ -272,8 +301,7 @@ async function connectToWhatsApp () {
                     continue;
                 }
             }
-
-            let textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+            textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
 
             // Detectar si mandó un archivo (Documento, Imagen o Audio) sin necesidad de descargarlo
             const docMessage = msg.message.documentMessage || msg.message.documentWithCaptionMessage?.message?.documentMessage;
@@ -316,36 +344,45 @@ async function connectToWhatsApp () {
                     if (!modeData || (Date.now() - modeData.timestamp > ONE_HOUR)) {
                         modeData = { mode: 'PENDING', timestamp: Date.now() };
                         userModes.set(senderNumber, modeData);
-                        
-                        let userHistory = chatHistories.get(senderNumber) || [];
-                        userHistory.push({ role: "user", parts: [{ text: finalMessage }] });
-                        
-                        const menuMsg = "¡Hola! Somos Buen Plan. Para poder ayudarte mejor, ¿por qué motivo es tu consulta?\n\n1️⃣ Impresiones / Fotocopias\n2️⃣ Agendas / Cuadernos / Souvenires\n\n_Por favor, responde con 1 o 2._";
-                        userHistory.push({ role: "model", parts: [{ text: menuMsg }] });
-                        chatHistories.set(senderNumber, userHistory);
-                        
-                        try {
-                            const sentMsg = await sock.sendMessage(senderNumber, { text: menuMsg });
-                            if (sentMsg) botMessageIds.add(sentMsg.key.id);
-                        } catch (e) {}
-                        return;
+                        chatHistories.set(senderNumber, []);
                     }
 
                     if (modeData.mode === 'PENDING') {
-                        const text = finalMessage.toLowerCase();
-                        if (text.includes('1') || text.includes('impresion') || text.includes('impresión') || text.includes('fotocopia') || text.includes('apunte')) {
-                            modeData.mode = 'IMPRESIONES';
-                            modeData.timestamp = Date.now();
-                            userModes.set(senderNumber, modeData);
-                        } else if (text.includes('2') || text.includes('agenda') || text.includes('cuaderno') || text.includes('souvenir') || text.includes('diseño')) {
-                            modeData.mode = 'BUENPLAN';
-                            modeData.timestamp = Date.now();
-                            userModes.set(senderNumber, modeData);
-                        } else {
-                            try {
-                                const sentMsg = await sock.sendMessage(senderNumber, { text: "Por favor, elige una de las opciones respondiendo con *1* o *2* para derivarte al asistente correcto." });
+                        let userHistory = chatHistories.get(senderNumber) || [];
+                        userHistory.push({ role: "user", parts: [{ text: finalMessage }] });
+                        
+                        const routerModel = genAI.getGenerativeModel({ 
+                            model: "gemini-flash-latest",
+                            systemInstruction: PROMPT_ROUTER
+                        });
+                        
+                        try {
+                            await sock.sendPresenceUpdate('composing', senderNumber);
+                            const result = await routerModel.generateContent({ contents: userHistory });
+                            const routerResponse = result.response.text().trim();
+
+                            if (routerResponse.includes('[ROUTER_IMPRESIONES]')) {
+                                modeData.mode = 'IMPRESIONES';
+                                modeData.timestamp = Date.now();
+                                userModes.set(senderNumber, modeData);
+                                userHistory.pop(); // Remove it to add it again in the main flow
+                            } else if (routerResponse.includes('[ROUTER_AGENDAS]')) {
+                                modeData.mode = 'BUENPLAN';
+                                modeData.timestamp = Date.now();
+                                userModes.set(senderNumber, modeData);
+                                userHistory.pop(); // Remove it to add it again in the main flow
+                            } else {
+                                userHistory.push({ role: "model", parts: [{ text: routerResponse }] });
+                                chatHistories.set(senderNumber, userHistory);
+                                
+                                const sentMsg = await sock.sendMessage(senderNumber, { text: routerResponse });
                                 if (sentMsg) botMessageIds.add(sentMsg.key.id);
-                            } catch (e) {}
+                                await sock.sendPresenceUpdate('paused', senderNumber);
+                                return;
+                            }
+                        } catch (e) {
+                            console.error("Error en router:", e);
+                            await sock.sendPresenceUpdate('paused', senderNumber);
                             return;
                         }
                     } else {
