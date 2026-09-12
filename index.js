@@ -38,6 +38,7 @@ let botAwake = true; // Variable para dormir o despertar al bot
 const OWNER_NUMBERS = ['22674418815', '2255556502']; // Números autorizados para comandos
 const DEBOUNCE_TIME = 20000;
 const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+const ONE_HOUR = 60 * 60 * 1000;
 const ANTI_ABUSE_MINUTES = 15 * 60 * 1000;
 
 async function initFirebase() {
